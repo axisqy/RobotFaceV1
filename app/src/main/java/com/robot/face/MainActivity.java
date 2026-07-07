@@ -6,6 +6,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Bundle;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
@@ -14,6 +15,7 @@ import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.view.View;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -26,22 +28,16 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Locale;
 
-/**
- * Hosts a fullscreen WebView that renders the robot face UI (index.html).
- *
- * Why native bridges instead of pure Web Speech API:
- * Android's system WebView does NOT reliably implement SpeechRecognition
- * (window.webkitSpeechRecognition mostly fails silently in WebView, unlike
- * in the Chrome browser app). To make voice input/output actually work,
- * this Activity uses Android's native SpeechRecognizer and TextToSpeech
- * classes, and pushes results into the page via evaluateJavascript().
- */
 public class MainActivity extends Activity {
 
     private WebView webView;
     private SpeechRecognizer speechRecognizer;
     private TextToSpeech tts;
     private SharedPreferences prefs;
+
+    // File chooser
+    private ValueCallback<Uri[]> uploadMessage;
+    private static final int FILE_CHOOSER_REQUEST_CODE = 1234;
 
     private static final int RECORD_AUDIO_PERMISSION_CODE = 1001;
 
@@ -61,13 +57,46 @@ public class MainActivity extends Activity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        webView.setWebChromeClient(new WebChromeClient());
+
+        // === FILE PICKER SUPPORT ===
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                uploadMessage = filePathCallback;
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("*/*");
+                startActivityForResult(Intent.createChooser(intent, "Select GGUF Model"), FILE_CHOOSER_REQUEST_CODE);
+                return true;
+            }
+        });
+
         webView.addJavascriptInterface(new Bridge(), "Android");
         webView.loadUrl("file:///android_asset/index.html");
         setContentView(webView);
 
         setupTextToSpeech();
         requestMicPermission();
+    }
+
+    // === HANDLE FILE PICKER RESULT ===
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == FILE_CHOOSER_REQUEST_CODE) {
+            if (uploadMessage == null) return;
+
+            Uri[] results = null;
+            if (resultCode == RESULT_OK && data != null) {
+                String dataString = data.getDataString();
+                if (dataString != null) {
+                    results = new Uri[]{Uri.parse(dataString)};
+                }
+            }
+            uploadMessage.onReceiveValue(results);
+            uploadMessage = null;
+        }
     }
 
     private void setupTextToSpeech() {
@@ -96,7 +125,6 @@ public class MainActivity extends Activity {
 
             @Override
             public void onRangeStart(String utteranceId, int start, int end, int frame) {
-                // Fired per spoken word on API 26+. Drives the jaw animation.
                 runOnUiThread(() -> evalJs(
                         "window.onWordBoundary && window.onWordBoundary(" + start + "," + end + ");"));
             }
@@ -147,7 +175,6 @@ public class MainActivity extends Activity {
 
                 @Override
                 public void onRmsChanged(float rmsdB) {
-                    // Feed mic volume into the face for a subtle "listening" reaction.
                     evalJs("window.onListenLevel && window.onListenLevel(" + rmsdB + ");");
                 }
 
@@ -217,7 +244,7 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
-    /** Exposed to JS in index.html as window.Android */
+    /** Exposed to JS as window.Android */
     public class Bridge {
 
         @JavascriptInterface
@@ -240,7 +267,6 @@ public class MainActivity extends Activity {
             return prefs.getString("gemini_api_key", "");
         }
 
-        // ===== NEW: System Prompt =====
         @JavascriptInterface
         public void saveSystemPrompt(String prompt) {
             prefs.edit().putString("system_prompt", prompt).apply();
@@ -251,7 +277,6 @@ public class MainActivity extends Activity {
             return prefs.getString("system_prompt", "");
         }
 
-        // ===== NEW: GGUF Path =====
         @JavascriptInterface
         public void saveGgufPath(String path) {
             prefs.edit().putString("gguf_path", path).apply();
@@ -262,7 +287,6 @@ public class MainActivity extends Activity {
             return prefs.getString("gguf_path", "");
         }
 
-        // ===== NEW: LLM Provider =====
         @JavascriptInterface
         public void saveLlmProvider(String provider) {
             prefs.edit().putString("llm_provider", provider).apply();
@@ -273,19 +297,13 @@ public class MainActivity extends Activity {
             return prefs.getString("llm_provider", "gemini");
         }
 
-        // ===== NEW: GGUF Loading (stub for now) =====
         @JavascriptInterface
         public void loadGguf(String path) {
-            // TODO: Implement actual GGUF loading later
-            // For now, just log it
             android.util.Log.d("Bridge", "loadGguf called with path: " + path);
         }
 
-        // ===== NEW: Local Inference (stub for now) =====
         @JavascriptInterface
         public String runLocalInference(String prompt, String text) {
-            // TODO: Implement actual local inference later
-            // For now, return a placeholder response
             return "Local inference not implemented yet. Please use Gemini for now.";
         }
     }
