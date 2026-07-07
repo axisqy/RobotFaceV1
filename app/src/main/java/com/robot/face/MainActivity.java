@@ -239,5 +239,54 @@ public class MainActivity extends Activity {
         public String getApiKey() {
             return prefs.getString("gemini_api_key", "");
         }
+
+        // ===== NEW: System Prompt =====
+        @JavascriptInterface
+        public void saveSystemPrompt(String prompt) {
+            prefs.edit().putString("system_prompt", prompt).apply();
+        }
+
+        @JavascriptInterface
+        public String getSystemPrompt() {
+            return prefs.getString("system_prompt", "");
+        }
+
+        // ===== NEW: GGUF Path =====
+        @JavascriptInterface
+        public void saveGgufPath(String path) {
+            prefs.edit().putString("gguf_path", path).apply();
+        }
+
+        @JavascriptInterface
+        public String getGgufPath() {
+            return prefs.getString("gguf_path", "");
+        }
+
+        // ===== NEW: LLM Provider =====
+        @JavascriptInterface
+        public void saveLlmProvider(String provider) {
+            prefs.edit().putString("llm_provider", provider).apply();
+        }
+
+        @JavascriptInterface
+        public String getLlmProvider() {
+            return prefs.getString("llm_provider", "gemini");
+        }
+
+        // ===== NEW: GGUF Loading (stub for now) =====
+        @JavascriptInterface
+        public void loadGguf(String path) {
+            // TODO: Implement actual GGUF loading later
+            // For now, just log it
+            android.util.Log.d("Bridge", "loadGguf called with path: " + path);
+        }
+
+        // ===== NEW: Local Inference (stub for now) =====
+        @JavascriptInterface
+        public String runLocalInference(String prompt, String text) {
+            // TODO: Implement actual local inference later
+            // For now, return a placeholder response
+            return "Local inference not implemented yet. Please use Gemini for now.";
+        }
     }
 }
