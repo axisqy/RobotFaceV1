@@ -18,7 +18,4 @@ allprojects {
 
 task clean(type: Delete) {
     delete rootProject.buildDir
-    dependencies {
-    implementation 'androidx.core:core:1.13.1'
-    }
 }
