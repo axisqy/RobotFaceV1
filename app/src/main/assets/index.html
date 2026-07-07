@@ -53,6 +53,7 @@
     position: absolute; top: 10px; right: 10px; width: 36px; height: 36px;
     border-radius: 50%; border: 1px solid #2a3b34; background: rgba(20,20,25,0.7);
     color: #6fffb0; font-size: 16px; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; z-index: 100;
   }
   #keyModal {
     position: absolute; inset: 0; background: rgba(0,0,0,0.85);
@@ -85,6 +86,7 @@
   #keyModalInner button {
     flex: 1; padding: 12px; border-radius: 6px; border: none;
     background: #1d5c42; color: #eafff4; font-size: 14px; font-weight: bold;
+    cursor: pointer;
   }
   #keyModalInner button[onclick="resetPrompt()"] {
     background: #3a2020; flex: 1;
@@ -186,6 +188,19 @@ function bridgeRunLocalInference(prompt, text) {
   if (hasBridge) return Android.runLocalInference(prompt, text); 
   return null;
 }
+
+/* =========================================================
+   CONSTANTS (defined early)
+   ========================================================= */
+const MODEL = 'gemini-3.5-flash';
+
+const DEFAULT_SYSTEM_PROMPT =
+  "You are a strange, minimal AI embodied in a small robot head with no real " +
+  "purpose. Keep replies short: one to three sentences. Tone is a little " +
+  "unsettling, dry, and cryptic, never cruel or actually harmful. Never break " +
+  "character to mention you are Gemini or Google.";
+
+let SYSTEM_PROMPT = bridgeGetPrompt() || DEFAULT_SYSTEM_PROMPT;
 
 /* =========================================================
    1. FACE RENDERER
@@ -488,7 +503,7 @@ function openSettings() {
   document.getElementById('llmProviderSelect').value = provider;
   
   document.getElementById('apiKeyInput').value = bridgeGetKey();
-  document.getElementById('promptInput').value = bridgeGetPrompt() || DEFAULT_SYSTEM_PROMPT;
+  document.getElementById('promptInput').value = SYSTEM_PROMPT;
   
   const ggufPath = bridgeGetGgufPath();
   if (ggufPath) {
@@ -506,8 +521,10 @@ function saveSettings() {
   bridgeSaveProvider(provider);
   
   const key = document.getElementById('apiKeyInput').value.trim();
-  if (hasBridge) bridgeSaveKey(key);
-  else localStorage.setItem('gemini_key', key);
+  if (key) {
+    if (hasBridge) bridgeSaveKey(key);
+    else localStorage.setItem('gemini_key', key);
+  }
 
   const prompt = document.getElementById('promptInput').value.trim() || DEFAULT_SYSTEM_PROMPT;
   SYSTEM_PROMPT = prompt;
@@ -522,13 +539,16 @@ function resetPrompt() {
   bridgeSavePrompt(DEFAULT_SYSTEM_PROMPT);
 }
 
-window.addEventListener('load', () => {
-  const provider = bridgeGetProvider();
-  if (provider === 'gemini' && !bridgeGetKey()) {
-    openSettings();
-  } else if (provider === 'local' && !bridgeGetGgufPath()) {
-    openSettings();
-  }
+// Check on first load if we need settings
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    const provider = bridgeGetProvider();
+    if (provider === 'gemini' && !bridgeGetKey()) {
+      openSettings();
+    } else if (provider === 'local' && !bridgeGetGgufPath()) {
+      openSettings();
+    }
+  }, 300);
 });
 
 /* =========================================================
@@ -577,16 +597,6 @@ document.getElementById('textInput').addEventListener('keydown', (e) => {
    Supports both Gemini (cloud) and Local GGUF inference.
    Both use the same SYSTEM_PROMPT.
    ========================================================= */
-const MODEL = 'gemini-3.5-flash';
-
-const DEFAULT_SYSTEM_PROMPT =
-  "You are a strange, minimal AI embodied in a small robot head with no real " +
-  "purpose. Keep replies short: one to three sentences. Tone is a little " +
-  "unsettling, dry, and cryptic, never cruel or actually harmful. Never break " +
-  "character to mention you are Gemini or Google.";
-
-let SYSTEM_PROMPT = bridgeGetPrompt() || DEFAULT_SYSTEM_PROMPT;
-
 async function handleUserText(text) {
   const provider = bridgeGetProvider();
   
