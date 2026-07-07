@@ -57,29 +57,46 @@
   #keyModal {
     position: absolute; inset: 0; background: rgba(0,0,0,0.85);
     display: none; align-items: center; justify-content: center; padding: 24px;
+    z-index: 1000;
   }
   #keyModal.show { display: flex; }
   #keyModalInner {
     background: #0d1210; border: 1px solid #2a3b34; border-radius: 12px;
     padding: 20px; width: 100%; max-width: 340px; color: #cdeee0;
+    max-height: 90vh; overflow-y: auto;
   }
   #keyModalInner h3 { margin: 0 0 8px 0; color: #6fffb0; font-size: 16px; }
-  #keyModalInner p { font-size: 12px; line-height: 1.5; color: #8fa89c; }
+  #keyModalInner p { font-size: 12px; line-height: 1.5; color: #8fa89c; margin: 0 0 12px 0; }
   #keyModalInner a { color: #6fffb0; }
-  #apiKeyInput {
-    width: 100%; margin-top: 10px; padding: 10px; border-radius: 6px;
+  .modal-section { margin-bottom: 16px; }
+  .modal-label { display: block; font-size: 11px; color: #8fa89c; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px; }
+  #apiKeyInput, #promptInput, #llmProviderSelect, #ggufPathDisplay {
+    width: 100%; padding: 10px; border-radius: 6px;
     border: 1px solid #2a3b34; background: #05070a; color: #cdeee0; font-size: 13px;
   }
-  #promptInput {
-    width: 100%; margin-top: 6px; padding: 10px; border-radius: 6px;
-    border: 1px solid #2a3b34; background: #05070a; color: #cdeee0; font-size: 13px;
+  #llmProviderSelect { margin-top: 6px; }
+  #ggufPathDisplay {
+    background: #0a0d09; color: #6fffb0; padding: 8px; font-size: 11px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  #ggufSection { display: none; }
+  #ggufSection.show { display: block; }
+  .button-group { display: flex; gap: 8px; margin-top: 12px; }
   #keyModalInner button {
-    margin-top: 12px; width: 100%; padding: 12px; border-radius: 6px; border: none;
+    flex: 1; padding: 12px; border-radius: 6px; border: none;
     background: #1d5c42; color: #eafff4; font-size: 14px; font-weight: bold;
   }
   #keyModalInner button[onclick="resetPrompt()"] {
-    background: #3a2020;
+    background: #3a2020; flex: 1;
+  }
+  #pickGgufBtn {
+    background: #1d4c5c; flex: 1;
+  }
+  #clearGgufBtn {
+    background: #3a2020; flex: 1;
+  }
+  #promptInput {
+    resize: vertical; min-height: 80px;
   }
 </style>
 </head>
@@ -98,17 +115,48 @@
 
 <div id="keyModal">
   <div id="keyModalInner">
-    <h3>Gemini API Key needed</h3>
-    <p>
-      This runs on Google's free Gemini API. Get a free key (no card needed)
-      at <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>,
-      then paste it below. It's saved only on this device.
-    </p>
-    <input id="apiKeyInput" type="text" placeholder="Paste your API key here" />
-    <h3 style="margin-top:16px;">System prompt</h3>
-    <textarea id="promptInput" rows="4" style="width:100%;margin-top:6px;padding:10px;border-radius:6px;border:1px solid #2a3b34;background:#05070a;color:#cdeee0;font-size:13px;"></textarea>
-    <button onclick="saveKey()">Save</button>
-    <button onclick="resetPrompt()" style="margin-top:8px;background:#3a2020;">Reset prompt to default</button>
+    <h3>Settings</h3>
+    
+    <!-- LLM Provider Selection -->
+    <div class="modal-section">
+      <label class="modal-label">LLM Provider</label>
+      <select id="llmProviderSelect" onchange="onProviderChange()">
+        <option value="gemini">Gemini (Cloud)</option>
+        <option value="local">Local GGUF</option>
+      </select>
+    </div>
+
+    <!-- Gemini Section -->
+    <div id="geminiSection" class="modal-section">
+      <p>This runs on Google's free Gemini API. Get a free key (no card needed) at <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>, then paste it below. It's saved only on this device.</p>
+      <label class="modal-label">API Key</label>
+      <input id="apiKeyInput" type="text" placeholder="Paste your API key here" />
+    </div>
+
+    <!-- Local GGUF Section -->
+    <div id="ggufSection" class="modal-section">
+      <p>Select a .gguf model file to run inference locally. The file path will be saved for future use.</p>
+      <label class="modal-label">Model File</label>
+      <div id="ggufPathDisplay">No file selected</div>
+      <div class="button-group">
+        <button id="pickGgufBtn" onclick="pickGgufFile()">Select Model</button>
+        <button id="clearGgufBtn" onclick="clearGgufFile()">Clear</button>
+      </div>
+      <input id="ggufFilePicker" type="file" accept=".gguf" style="display:none;" onchange="onGgufFileSelected()" />
+    </div>
+
+    <!-- System Prompt (shared by both) -->
+    <div class="modal-section">
+      <h3 style="margin-top:0;">System Prompt</h3>
+      <p style="font-size:11px;color:#6fa8a0;">Used by both Gemini and Local LLM</p>
+      <textarea id="promptInput" rows="4" placeholder="System prompt..."></textarea>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="button-group">
+      <button onclick="saveSettings()">Save</button>
+      <button onclick="resetPrompt()" style="background:#3a2020;">Reset Prompt</button>
+    </div>
   </div>
 </div>
 
@@ -127,6 +175,17 @@ function bridgeSaveKey(key)     { if (hasBridge) Android.saveApiKey(key); }
 function bridgeGetKey()         { return hasBridge ? Android.getApiKey() : (localStorage.getItem('gemini_key') || ''); }
 function bridgeSavePrompt(p)    { if (hasBridge) Android.saveSystemPrompt(p); else localStorage.setItem('sys_prompt', p); }
 function bridgeGetPrompt()      { return hasBridge ? Android.getSystemPrompt() : (localStorage.getItem('sys_prompt') || ''); }
+function bridgeSaveGgufPath(p)  { if (hasBridge) Android.saveGgufPath(p); else localStorage.setItem('gguf_path', p); }
+function bridgeGetGgufPath()    { return hasBridge ? Android.getGgufPath() : (localStorage.getItem('gguf_path') || ''); }
+function bridgeSaveProvider(p)  { if (hasBridge) Android.saveLlmProvider(p); else localStorage.setItem('llm_provider', p); }
+function bridgeGetProvider()    { return hasBridge ? Android.getLlmProvider() : (localStorage.getItem('llm_provider') || 'gemini'); }
+
+// Stub functions for local LLM inference (you'll implement these in Android)
+function bridgeLoadGguf(path)   { if (hasBridge) Android.loadGguf(path); }
+function bridgeRunLocalInference(prompt, text) { 
+  if (hasBridge) return Android.runLocalInference(prompt, text); 
+  return null;
+}
 
 /* =========================================================
    1. FACE RENDERER
@@ -387,14 +446,65 @@ function setStatus(text) { document.getElementById('status').textContent = text;
 function setTranscript(text) { document.getElementById('transcript').textContent = text; }
 
 /* =========================================================
-   3. SETTINGS / API KEY MODAL
+   3. SETTINGS / PROVIDER SELECTION / FILE PICKER
    ========================================================= */
+function onProviderChange() {
+  const provider = document.getElementById('llmProviderSelect').value;
+  const geminiSection = document.getElementById('geminiSection');
+  const ggufSection = document.getElementById('ggufSection');
+  
+  if (provider === 'gemini') {
+    geminiSection.style.display = 'block';
+    ggufSection.classList.remove('show');
+  } else {
+    geminiSection.style.display = 'none';
+    ggufSection.classList.add('show');
+  }
+}
+
+function pickGgufFile() {
+  document.getElementById('ggufFilePicker').click();
+}
+
+function onGgufFileSelected() {
+  const fileInput = document.getElementById('ggufFilePicker');
+  const file = fileInput.files[0];
+  if (!file) return;
+  
+  const path = file.name; // In a real Android app, this would be the full file path
+  document.getElementById('ggufPathDisplay').textContent = path;
+  bridgeSaveGgufPath(path);
+  bridgeLoadGguf(path);
+}
+
+function clearGgufFile() {
+  document.getElementById('ggufPathDisplay').textContent = 'No file selected';
+  document.getElementById('ggufFilePicker').value = '';
+  bridgeSaveGgufPath('');
+}
+
 function openSettings() {
+  const provider = bridgeGetProvider();
+  document.getElementById('llmProviderSelect').value = provider;
+  
   document.getElementById('apiKeyInput').value = bridgeGetKey();
-  document.getElementById('promptInput').value = bridgeGetPrompt();
+  document.getElementById('promptInput').value = bridgeGetPrompt() || DEFAULT_SYSTEM_PROMPT;
+  
+  const ggufPath = bridgeGetGgufPath();
+  if (ggufPath) {
+    document.getElementById('ggufPathDisplay').textContent = ggufPath;
+  } else {
+    document.getElementById('ggufPathDisplay').textContent = 'No file selected';
+  }
+  
+  onProviderChange();
   document.getElementById('keyModal').classList.add('show');
 }
-function saveKey() {
+
+function saveSettings() {
+  const provider = document.getElementById('llmProviderSelect').value;
+  bridgeSaveProvider(provider);
+  
   const key = document.getElementById('apiKeyInput').value.trim();
   if (hasBridge) bridgeSaveKey(key);
   else localStorage.setItem('gemini_key', key);
@@ -405,13 +515,20 @@ function saveKey() {
 
   document.getElementById('keyModal').classList.remove('show');
 }
+
 function resetPrompt() {
   SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT;
   document.getElementById('promptInput').value = DEFAULT_SYSTEM_PROMPT;
   bridgeSavePrompt(DEFAULT_SYSTEM_PROMPT);
 }
+
 window.addEventListener('load', () => {
-  if (!bridgeGetKey()) openSettings();
+  const provider = bridgeGetProvider();
+  if (provider === 'gemini' && !bridgeGetKey()) {
+    openSettings();
+  } else if (provider === 'local' && !bridgeGetGgufPath()) {
+    openSettings();
+  }
 });
 
 /* =========================================================
@@ -431,7 +548,15 @@ window.onSpeechError = function(code) {
 };
 
 function onMicPressed() {
-  if (!bridgeGetKey()) { openSettings(); return; }
+  const provider = bridgeGetProvider();
+  if (provider === 'gemini' && !bridgeGetKey()) { 
+    openSettings(); 
+    return; 
+  }
+  if (provider === 'local' && !bridgeGetGgufPath()) { 
+    openSettings(); 
+    return; 
+  }
   bridgeStartListening();
 }
 
@@ -448,11 +573,9 @@ document.getElementById('textInput').addEventListener('keydown', (e) => {
 });
 
 /* =========================================================
-   5. GEMINI API CALL
-   Model: gemini-3.5-flash (current free-tier Flash model).
-   If Google renames/retires this later, swap the MODEL
-   constant below — check https://ai.google.dev for the
-   current free-tier model list.
+   5. LLM INFERENCE ROUTING
+   Supports both Gemini (cloud) and Local GGUF inference.
+   Both use the same SYSTEM_PROMPT.
    ========================================================= */
 const MODEL = 'gemini-3.5-flash';
 
@@ -465,6 +588,16 @@ const DEFAULT_SYSTEM_PROMPT =
 let SYSTEM_PROMPT = bridgeGetPrompt() || DEFAULT_SYSTEM_PROMPT;
 
 async function handleUserText(text) {
+  const provider = bridgeGetProvider();
+  
+  if (provider === 'gemini') {
+    handleGeminiInference(text);
+  } else if (provider === 'local') {
+    handleLocalInference(text);
+  }
+}
+
+async function handleGeminiInference(text) {
   const key = bridgeGetKey();
   if (!key) { openSettings(); return; }
 
@@ -501,6 +634,30 @@ async function handleUserText(text) {
     console.error(err);
     setStatus('');
     setTranscript('(no connection)');
+    bridgeSpeak('I cannot think right now.');
+  }
+}
+
+function handleLocalInference(text) {
+  setStatus('THINKING');
+  try {
+    // Call Android bridge to run inference with the loaded GGUF model
+    // Pass both the system prompt and user text — the Android side decides how to combine them
+    const result = bridgeRunLocalInference(SYSTEM_PROMPT, text);
+    
+    if (result) {
+      setStatus('');
+      setTranscript('AI: ' + result);
+      bridgeSpeak(result);
+    } else {
+      setStatus('');
+      setTranscript('(local inference failed)');
+      bridgeSpeak('Something went wrong with the local model.');
+    }
+  } catch (err) {
+    console.error(err);
+    setStatus('');
+    setTranscript('(local model error)');
     bridgeSpeak('I cannot think right now.');
   }
 }
