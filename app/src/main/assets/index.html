@@ -46,7 +46,7 @@
     width: 46px; height: 46px; border-radius: 50%; border: 1px solid #2a3b34;
     background: rgba(20,20,25,0.85); color: #6fffb0; font-size: 20px;
     display: flex; align-items: center; justify-content: center;
-    flex-shrink: 0;
+    flex-shrink: 0; cursor: pointer;
   }
   #micBtn.listening { background: #143d2d; box-shadow: 0 0 14px rgba(77,255,176,0.8); }
   #gearBtn {
@@ -56,9 +56,9 @@
     cursor: pointer; z-index: 100;
   }
   #keyModal {
-    position: absolute; inset: 0; background: rgba(0,0,0,0.85);
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85);
     display: none; align-items: center; justify-content: center; padding: 24px;
-    z-index: 1000;
+    z-index: 9999;
   }
   #keyModal.show { display: flex; }
   #keyModalInner {
@@ -499,6 +499,7 @@ function clearGgufFile() {
 }
 
 function openSettings() {
+  console.log('openSettings called');
   const provider = bridgeGetProvider();
   document.getElementById('llmProviderSelect').value = provider;
   
@@ -538,18 +539,6 @@ function resetPrompt() {
   document.getElementById('promptInput').value = DEFAULT_SYSTEM_PROMPT;
   bridgeSavePrompt(DEFAULT_SYSTEM_PROMPT);
 }
-
-// Check on first load if we need settings
-document.addEventListener('DOMContentLoaded', () => {
-  setTimeout(() => {
-    const provider = bridgeGetProvider();
-    if (provider === 'gemini' && !bridgeGetKey()) {
-      openSettings();
-    } else if (provider === 'local' && !bridgeGetGgufPath()) {
-      openSettings();
-    }
-  }, 300);
-});
 
 /* =========================================================
    4. MIC / TEXT INPUT HANDLERS
@@ -669,6 +658,31 @@ function handleLocalInference(text) {
     setStatus('');
     setTranscript('(local model error)');
     bridgeSpeak('I cannot think right now.');
+  }
+}
+
+/* =========================================================
+   6. INITIALIZATION ON DOM READY
+   ========================================================= */
+// This must run AFTER all functions are defined
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+  // DOM already loaded (happens if script runs late)
+  initializeApp();
+}
+
+function initializeApp() {
+  console.log('App initialized');
+  const provider = bridgeGetProvider();
+  console.log('Current provider:', provider);
+  
+  if (provider === 'gemini' && !bridgeGetKey()) {
+    console.log('No API key, opening settings');
+    openSettings();
+  } else if (provider === 'local' && !bridgeGetGgufPath()) {
+    console.log('No GGUF path, opening settings');
+    openSettings();
   }
 }
 </script>
