@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Robot Face</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #050507; overflow: hidden;
+    font-family: monospace;
+    user-select: none;
+  }
+  #face {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+  }
+  #status {
+    position: absolute; top: 14px; left: 0; width: 100%;
+    text-align: center; color: #4dffb0; font-size: 12px;
+    letter-spacing: 2px; opacity: 0.65; pointer-events: none;
+    text-shadow: 0 0 6px rgba(77,255,176,0.5);
+  }
+  #transcript {
+    position: absolute; bottom: 84px; left: 12px; right: 12px;
+    color: #8fffcf; font-size: 12px; opacity: 0.75; text-align: center;
+    pointer-events: none; max-height: 60px; overflow: hidden;
+    text-shadow: 0 0 4px rgba(77,255,176,0.4);
+  }
+  #ui-bar {
+    position: absolute; bottom: 0; left: 0; width: 100%;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
+    background: linear-gradient(to top, rgba(0,0,0,0.55), rgba(0,0,0,0));
+  }
+  #textInput {
+    flex: 1; background: rgba(20,20,25,0.85); border: 1px solid #2a3b34;
+    color: #d8fff0; padding: 12px 14px; border-radius: 20px;
+    font-size: 15px; outline: none;
+  }
+  #textInput::placeholder { color: #4f6a60; }
+  .round-btn {
+    width: 46px; height: 46px; border-radius: 50%; border: 1px solid #2a3b34;
+    background: rgba(20,20,25,0.85); color: #6fffb0; font-size: 20px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  #micBtn.listening { background: #143d2d; box-shadow: 0 0 14px rgba(77,255,176,0.8); }
+  #gearBtn {
+    position: absolute; top: 10px; right: 10px; width: 36px; height: 36px;
+    border-radius: 50%; border: 1px solid #2a3b34; background: rgba(20,20,25,0.7);
+    color: #6fffb0; font-size: 16px; display: flex; align-items: center; justify-content: center;
+  }
+  #keyModal {
+    position: absolute; inset: 0; background: rgba(0,0,0,0.85);
+    display: none; align-items: center; justify-content: center; padding: 24px;
+  }
+  #keyModal.show { display: flex; }
+  #keyModalInner {
+    background: #0d1210; border: 1px solid #2a3b34; border-radius: 12px;
+    padding: 20px; width: 100%; max-width: 340px; color: #cdeee0;
+  }
+  #keyModalInner h3 { margin: 0 0 8px 0; color: #6fffb0; font-size: 16px; }
+  #keyModalInner p { font-size: 12px; line-height: 1.5; color: #8fa89c; }
+  #keyModalInner a { color: #6fffb0; }
+  #apiKeyInput {
+    width: 100%; margin-top: 10px; padding: 10px; border-radius: 6px;
+    border: 1px solid #2a3b34; background: #05070a; color: #cdeee0; font-size: 13px;
+  }
+  #keyModalInner button {
+    margin-top: 12px; width: 100%; padding: 12px; border-radius: 6px; border: none;
+    background: #1d5c42; color: #eafff4; font-size: 14px; font-weight: bold;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="face"></canvas>
+<div id="status"></div>
+<div id="transcript"></div>
+<button id="gearBtn" onclick="openSettings()">&#9881;</button>
+
+<div id="ui-bar">
+  <button id="micBtn" class="round-btn" onclick="onMicPressed()">&#127908;</button>
+  <input id="textInput" type="text" placeholder="Say something..." />
+  <button id="sendBtn" class="round-btn" onclick="onSendPressed()">&#9658;</button>
+</div>
+
+<div id="keyModal">
+  <div id="keyModalInner">
+    <h3>Gemini API Key needed</h3>
+    <p>
+      This runs on Google's free Gemini API. Get a free key (no card needed)
+      at <a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a>,
+      then paste it below. It's saved only on this device.
+    </p>
+    <input id="apiKeyInput" type="text" placeholder="Paste your API key here" />
+    <button onclick="saveKey()">Save</button>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   0. BRIDGE HELPERS
+   Android object is injected natively by MainActivity.Bridge.
+   Guard every call so this also doesn't crash if opened in a
+   plain desktop browser during testing.
+   ========================================================= */
+const hasBridge = typeof Android !== 'undefined';
+
+function bridgeStartListening() { if (hasBridge) Android.startListening(); }
+function bridgeSpeak(text)      { if (hasBridge) Android.speak(text); }
+function bridgeSaveKey(key)     { if (hasBridge) Android.saveApiKey(key); }
+function bridgeGetKey()         { return hasBridge ? Android.getApiKey() : (localStorage.getItem('gemini_key') || ''); }
+
+/* =========================================================
+   1. FACE RENDERER
+   Low-res canvas scaled up with CSS pixelated rendering
+   for a deliberately blocky, uncanny look. Runs its own
+   idle-animation loop with random "for no reason" quirks.
+   ========================================================= */
+const canvas = document.getElementById('face');
+const ctx = canvas.getContext('2d');
+
+// internal low-res grid — this is what makes it "pixelated"
+const GRID_W = 64, GRID_H = 96;
+canvas.width = GRID_W;
+canvas.height = GRID_H;
+
+function resizeCanvasCss() {
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+}
+window.addEventListener('resize', resizeCanvasCss);
+resizeCanvasCss();
+
+const face = {
+  t: 0,
+  blinkL: 1, blinkR: 1,          // 1 = open, 0 = closed
+  browL: 0, browR: 0,            // vertical offset, can go negative (angry) or positive (surprised)
+  mouthOpen: 0,                  // 0-1, driven by talking
+  mouthCurl: 0,                  // -1..1 asymmetric smirk
+  pupilX: 0, pupilY: 0,          // current pupil offset
+  pupilTX: 0, pupilTY: 0,        // saccade target
+  glow: 0.7,                     // eye glow intensity, rises when listening
+  glitchFrames: 0,
+  glitchOffsetX: 0,
+  talking: false,
+  listening: false,
+};
+
+// ---- idle quirk scheduler: random microexpressions "for no reason" ----
+function scheduleNextQuirk() {
+  const delay = 1400 + Math.random() * 3200; // every ~1.4-4.6s
+  setTimeout(() => { runRandomQuirk(); scheduleNextQuirk(); }, delay);
+}
+
+function runRandomQuirk() {
+  const r = Math.random();
+  if (r < 0.22) {
+    // asymmetric blink — one eye lags
+    blinkOnce(true);
+  } else if (r < 0.40) {
+    // saccade — sudden eye dart to a random point, held briefly
+    face.pupilTX = (Math.random() - 0.5) * 6;
+    face.pupilTY = (Math.random() - 0.5) * 4;
+  } else if (r < 0.58) {
+    // eyebrow twitch
+    const side = Math.random() < 0.5 ? 'browL' : 'browR';
+    const target = (Math.random() - 0.5) * 3;
+    animateValue(side, target, 120, () => animateValue(side, 0, 250));
+  } else if (r < 0.74) {
+    // brief asymmetric micro-smirk, gone almost as soon as it appears
+    animateValue('mouthCurl', (Math.random() < 0.5 ? 1 : -1) * (0.5 + Math.random() * 0.5), 90,
+      () => animateValue('mouthCurl', 0, 300));
+  } else if (r < 0.90) {
+    // glitch flicker — short digital stutter
+    face.glitchFrames = 2 + Math.floor(Math.random() * 3);
+  } else {
+    // double blink, close together — unsettling
+    blinkOnce(false);
+    setTimeout(() => blinkOnce(false), 180);
+  }
+}
+
+function blinkOnce(asymmetric) {
+  animateValue('blinkL', 0, 60, () => animateValue('blinkL', 1, 90));
+  if (asymmetric) {
+    setTimeout(() => {
+      animateValue('blinkR', 0, 60, () => animateValue('blinkR', 1, 140));
+    }, 70);
+  } else {
+    animateValue('blinkR', 0, 60, () => animateValue('blinkR', 1, 90));
+  }
+}
+
+// tiny tween helper, no libs needed
+function animateValue(key, target, durationMs, onDone) {
+  const start = face[key];
+  const t0 = performance.now();
+  function step() {
+    const p = Math.min(1, (performance.now() - t0) / durationMs);
+    face[key] = start + (target - start) * p;
+    if (p < 1) requestAnimationFrame(step);
+    else if (onDone) onDone();
+  }
+  requestAnimationFrame(step);
+}
+
+scheduleNextQuirk();
+
+// ---- talking / listening mouth + glow behaviour ----
+let mouthDecayTimer = null;
+window.onWordBoundary = function() {
+  // each spoken word gives the jaw a quick "chomp"
+  face.mouthOpen = 0.55 + Math.random() * 0.45;
+};
+window.onSpeechStart = function() {
+  face.talking = true;
+  setStatus('SPEAKING');
+};
+window.onSpeechDone = function() {
+  face.talking = false;
+  face.mouthOpen = 0;
+  setStatus('');
+};
+window.onListenStart = function() {
+  face.listening = true;
+  document.getElementById('micBtn').classList.add('listening');
+  setStatus('LISTENING');
+};
+window.onListenLevel = function(rms) {
+  // rms roughly -2..10, map to a subtle glow pulse
+  const norm = Math.max(0, Math.min(1, (rms + 2) / 12));
+  face.glow = 0.7 + norm * 0.9;
+};
+
+// ---- main draw loop ----
+function draw() {
+  face.t += 1;
+  const t = face.t * 0.02;
+
+  // idle drift so it looks alive even doing nothing
+  const driftX = Math.sin(t * 0.6) * 1.4;
+  const driftY = Math.cos(t * 0.42) * 1.0;
+
+  // pupils ease toward their saccade target
+  face.pupilX += (face.pupilTX - face.pupilX) * 0.12;
+  face.pupilY += (face.pupilTY - face.pupilY) * 0.12;
+  if (Math.random() < 0.004) { face.pupilTX = 0; face.pupilTY = 0; } // resettle sometimes
+
+  // mouth decays back toward closed unless actively talking
+  face.mouthOpen += (0 - face.mouthOpen) * 0.15;
+
+  // glow eases back toward idle baseline when not listening
+  if (!face.listening) face.glow += (0.7 - face.glow) * 0.08;
+
+  // glitch: occasional 1-3px offset + colour flip for a couple frames
+  let glitchX = 0, invert = false;
+  if (face.glitchFrames > 0) {
+    face.glitchFrames--;
+    glitchX = (Math.random() - 0.5) * 4;
+    invert = Math.random() < 0.5;
+  }
+
+  ctx.clearRect(0, 0, GRID_W, GRID_H);
+  ctx.fillStyle = '#05050a';
+  ctx.fillRect(0, 0, GRID_W, GRID_H);
+
+  const cx = GRID_W / 2 + driftX + glitchX;
+  const cy = GRID_H / 2 + driftY;
+
+  const eyeColor = invert ? '#ff4d6f' : '#6fffb0';
+  ctx.shadowColor = eyeColor;
+  ctx.shadowBlur = 6 * face.glow;
+  ctx.fillStyle = eyeColor;
+
+  // --- eyes ---
+  const eyeW = 11, eyeBaseH = 9, eyeGap = 16;
+  const lH = Math.max(1, eyeBaseH * face.blinkL);
+  const rH = Math.max(1, eyeBaseH * face.blinkR);
+
+  const leyeX = cx - eyeGap - eyeW / 2;
+  const reyeX = cx + eyeGap - eyeW / 2;
+  const eyeY = cy - 10;
+
+  ctx.fillRect(leyeX, eyeY + (eyeBaseH - lH), eyeW, lH);
+  ctx.fillRect(reyeX, eyeY + (eyeBaseH - rH), eyeW, rH);
+
+  // pupils (only drawn while eyes are reasonably open)
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#05050a';
+  if (face.blinkL > 0.3) {
+    ctx.fillRect(leyeX + eyeW / 2 - 1.5 + face.pupilX, eyeY + lH / 2 - 1.5 + face.pupilY, 3, 3);
+  }
+  if (face.blinkR > 0.3) {
+    ctx.fillRect(reyeX + eyeW / 2 - 1.5 + face.pupilX, eyeY + rH / 2 - 1.5 + face.pupilY, 3, 3);
+  }
+
+  // --- eyebrows ---
+  ctx.fillStyle = eyeColor;
+  ctx.globalAlpha = 0.55;
+  ctx.fillRect(leyeX - 1, eyeY - 5 - face.browL, eyeW + 2, 2);
+  ctx.fillRect(reyeX - 1, eyeY - 5 - face.browR, eyeW + 2, 2);
+  ctx.globalAlpha = 1;
+
+  // --- mouth: jagged pixel line, opens/curls ---
+  const mouthY = cy + 16;
+  const mouthW = 26;
+  const gap = 1 + face.mouthOpen * 7;
+  ctx.shadowColor = eyeColor;
+  ctx.shadowBlur = 4 * face.glow;
+  ctx.fillStyle = eyeColor;
+
+  const segments = 7;
+  for (let i = 0; i < segments; i++) {
+    const segX = cx - mouthW / 2 + (i * mouthW / (segments - 1));
+    const jag = (i % 2 === 0) ? 0 : 1.5;
+    const curl = face.mouthCurl * (i - segments / 2) * 0.6;
+    ctx.fillRect(segX - 1.5, mouthY - gap / 2 + jag + curl, 3, gap);
+  }
+
+  ctx.shadowBlur = 0;
+}
+
+function loop() { draw(); requestAnimationFrame(loop); }
+loop();
+
+/* =========================================================
+   2. STATUS / TRANSCRIPT UI HELPERS
+   ========================================================= */
+function setStatus(text) { document.getElementById('status').textContent = text; }
+function setTranscript(text) { document.getElementById('transcript').textContent = text; }
+
+/* =========================================================
+   3. SETTINGS / API KEY MODAL
+   ========================================================= */
+function openSettings() {
+  document.getElementById('apiKeyInput').value = bridgeGetKey();
+  document.getElementById('keyModal').classList.add('show');
+}
+function saveKey() {
+  const key = document.getElementById('apiKeyInput').value.trim();
+  if (hasBridge) bridgeSaveKey(key);
+  else localStorage.setItem('gemini_key', key);
+  document.getElementById('keyModal').classList.remove('show');
+}
+window.addEventListener('load', () => {
+  if (!bridgeGetKey()) openSettings();
+});
+
+/* =========================================================
+   4. MIC / TEXT INPUT HANDLERS
+   ========================================================= */
+window.onSpeechResult = function(text) {
+  document.getElementById('micBtn').classList.remove('listening');
+  face.listening = false;
+  setTranscript('You: ' + text);
+  handleUserText(text);
+};
+window.onSpeechError = function(code) {
+  document.getElementById('micBtn').classList.remove('listening');
+  face.listening = false;
+  setStatus('');
+  if (code !== 'no-match') setTranscript('(mic error: ' + code + ')');
+};
+
+function onMicPressed() {
+  if (!bridgeGetKey()) { openSettings(); return; }
+  bridgeStartListening();
+}
+
+function onSendPressed() {
+  const input = document.getElementById('textInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  setTranscript('You: ' + text);
+  handleUserText(text);
+}
+document.getElementById('textInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') onSendPressed();
+});
+
+/* =========================================================
+   5. GEMINI API CALL
+   Model: gemini-3.5-flash (current free-tier Flash model).
+   If Google renames/retires this later, swap the MODEL
+   constant below — check https://ai.google.dev for the
+   current free-tier model list.
+   ========================================================= */
+const MODEL = 'gemini-3.5-flash';
+
+// Loose "personality" so replies fit the creepy-head vibe.
+// Edit or delete this string freely.
+const SYSTEM_PROMPT =
+  "You are a strange, minimal AI embodied in a small robot head with no real " +
+  "purpose. Keep replies short: one to three sentences. Tone is a little " +
+  "unsettling, dry, and cryptic, never cruel or actually harmful. Never break " +
+  "character to mention you are Gemini or Google.";
+
+async function handleUserText(text) {
+  const key = bridgeGetKey();
+  if (!key) { openSettings(); return; }
+
+  setStatus('THINKING');
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: [{ role: 'user', parts: [{ text: text }] }]
+      })
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error('Gemini error', res.status, errBody);
+      setStatus('');
+      const msg = res.status === 429
+        ? 'Rate limit hit. Try again in a moment.'
+        : 'API error ' + res.status + '. Check your key.';
+      setTranscript(msg);
+      bridgeSpeak('Something is wrong with my connection.');
+      return;
+    }
+
+    const data = await res.json();
+    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '...';
+    setStatus('');
+    setTranscript('AI: ' + reply);
+    bridgeSpeak(reply);
+  } catch (err) {
+    console.error(err);
+    setStatus('');
+    setTranscript('(no connection)');
+    bridgeSpeak('I cannot think right now.');
+  }
+}
+</script>
+
+</body>
+</html>
