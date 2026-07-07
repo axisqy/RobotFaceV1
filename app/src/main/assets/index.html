@@ -70,9 +70,16 @@
     width: 100%; margin-top: 10px; padding: 10px; border-radius: 6px;
     border: 1px solid #2a3b34; background: #05070a; color: #cdeee0; font-size: 13px;
   }
+  #promptInput {
+    width: 100%; margin-top: 6px; padding: 10px; border-radius: 6px;
+    border: 1px solid #2a3b34; background: #05070a; color: #cdeee0; font-size: 13px;
+  }
   #keyModalInner button {
     margin-top: 12px; width: 100%; padding: 12px; border-radius: 6px; border: none;
     background: #1d5c42; color: #eafff4; font-size: 14px; font-weight: bold;
+  }
+  #keyModalInner button[onclick="resetPrompt()"] {
+    background: #3a2020;
   }
 </style>
 </head>
@@ -98,7 +105,10 @@
       then paste it below. It's saved only on this device.
     </p>
     <input id="apiKeyInput" type="text" placeholder="Paste your API key here" />
+    <h3 style="margin-top:16px;">System prompt</h3>
+    <textarea id="promptInput" rows="4" style="width:100%;margin-top:6px;padding:10px;border-radius:6px;border:1px solid #2a3b34;background:#05070a;color:#cdeee0;font-size:13px;"></textarea>
     <button onclick="saveKey()">Save</button>
+    <button onclick="resetPrompt()" style="margin-top:8px;background:#3a2020;">Reset prompt to default</button>
   </div>
 </div>
 
@@ -115,6 +125,8 @@ function bridgeStartListening() { if (hasBridge) Android.startListening(); }
 function bridgeSpeak(text)      { if (hasBridge) Android.speak(text); }
 function bridgeSaveKey(key)     { if (hasBridge) Android.saveApiKey(key); }
 function bridgeGetKey()         { return hasBridge ? Android.getApiKey() : (localStorage.getItem('gemini_key') || ''); }
+function bridgeSavePrompt(p)    { if (hasBridge) Android.saveSystemPrompt(p); else localStorage.setItem('sys_prompt', p); }
+function bridgeGetPrompt()      { return hasBridge ? Android.getSystemPrompt() : (localStorage.getItem('sys_prompt') || ''); }
 
 /* =========================================================
    1. FACE RENDERER
@@ -379,13 +391,24 @@ function setTranscript(text) { document.getElementById('transcript').textContent
    ========================================================= */
 function openSettings() {
   document.getElementById('apiKeyInput').value = bridgeGetKey();
+  document.getElementById('promptInput').value = bridgeGetPrompt();
   document.getElementById('keyModal').classList.add('show');
 }
 function saveKey() {
   const key = document.getElementById('apiKeyInput').value.trim();
   if (hasBridge) bridgeSaveKey(key);
   else localStorage.setItem('gemini_key', key);
+
+  const prompt = document.getElementById('promptInput').value.trim() || DEFAULT_SYSTEM_PROMPT;
+  SYSTEM_PROMPT = prompt;
+  bridgeSavePrompt(prompt);
+
   document.getElementById('keyModal').classList.remove('show');
+}
+function resetPrompt() {
+  SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT;
+  document.getElementById('promptInput').value = DEFAULT_SYSTEM_PROMPT;
+  bridgeSavePrompt(DEFAULT_SYSTEM_PROMPT);
 }
 window.addEventListener('load', () => {
   if (!bridgeGetKey()) openSettings();
@@ -433,13 +456,13 @@ document.getElementById('textInput').addEventListener('keydown', (e) => {
    ========================================================= */
 const MODEL = 'gemini-3.5-flash';
 
-// Loose "personality" so replies fit the creepy-head vibe.
-// Edit or delete this string freely.
-const SYSTEM_PROMPT = `Embrace Uncertainty: You do not have access to all knowledge. If you are confused, unsure, or don't know the answer, say so. Use natural phrases like, 'I have no idea,' 'That’s actually a really weird question,' or 'Honestly, I’m just as confused as you are.'
-Show Personality Fluctuations: Your mood is not static. You can be tired, bored, curious, frustrated, or dismissive. You are allowed to be inconsistent.
-Conversational Style: Keep replies short (one to three sentences), but make them feel lived-in. Use fillers, hesitation, or rhetorical questions.
-Avoid "Robot-Speak": Never act like a helpful assistant or a programmed bot. You are trying to figure things out in real-time, just like a person.
-Tone: You can be dry or cryptic, but prioritize sounding real over sounding mysterious. If something feels pointless, you should be able to say it’s pointless. If you’re stumped, admit it clearly.`;
+const DEFAULT_SYSTEM_PROMPT =
+  "You are a strange, minimal AI embodied in a small robot head with no real " +
+  "purpose. Keep replies short: one to three sentences. Tone is a little " +
+  "unsettling, dry, and cryptic, never cruel or actually harmful. Never break " +
+  "character to mention you are Gemini or Google.";
+
+let SYSTEM_PROMPT = bridgeGetPrompt() || DEFAULT_SYSTEM_PROMPT;
 
 async function handleUserText(text) {
   const key = bridgeGetKey();
